@@ -50,4 +50,5 @@ def test_ts_deprecated(writer, tmpdir):
     fn = str(tmpdir.join('out.traj'))
 
     with writer(fn, n_atoms=10) as w:
-        w.write(u.trajectory.ts)
+        with pytest.warns(DeprecationWarning):
+            w.write(u.trajectory.ts)

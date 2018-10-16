@@ -2148,15 +2148,22 @@ class WriterBase(six.with_metaclass(_Writermeta, IOBase)):
 
         Parameters
         ----------
-        obj : :class:`~MDAnalysis.core.groups.AtomGroup` or :class:`~MDAnalysis.core.universe.Universe` or a :class:`Timestep`
+        obj : :class:`~MDAnalysis.core.groups.AtomGroup` or :class:`~MDAnalysis.core.universe.Universe`
             write coordinate information associate with `obj`
 
         Note
         ----
         The size of the `obj` must be the same as the number of atoms provided
         when setting up the trajectory.
+
+        .. versionchanged:: 0.19.1
+           Deprecated the use of Timestep as arguments to write.  Use either a AtomGroup or Universe
         """
         if isinstance(obj, Timestep):
+            warnings.warn(
+                'Passing a Timestep to write is deprecated, '
+                'use either an AtomGroup or Universe',
+                DeprecationWarning)
             ts = obj
         else:
             try:
@@ -2167,7 +2174,7 @@ class WriterBase(six.with_metaclass(_Writermeta, IOBase)):
                     ts = obj.trajectory.ts
                 except AttributeError:
                     raise TypeError("No Timestep found in obj argument")
-        return self.write_next_timestep(ts)
+        return self.write_next_timestep(obj)
 
     def __del__(self):
         self.close()
