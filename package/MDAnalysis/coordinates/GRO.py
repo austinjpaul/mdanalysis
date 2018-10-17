@@ -365,7 +365,7 @@ class GROWriter(base.WriterBase):
         except AttributeError:
             if isinstance(obj, base.Timestep):
                 warnings.warn(
-                    'Passing a Timestep to write is deprecated, '
+                    'Passing a Timestep to write is deprecated, and will be removed in 1.0; '
                     'use either an AtomGroup or Universe',
                     DeprecationWarning)
                 ag_or_ts = obj.copy()
