@@ -31,7 +31,7 @@ import MDAnalysis as mda
 # sort so test order is predictable for parallel tests
 writers = sorted(itertools.chain(mda._SINGLEFRAME_WRITERS.values(),
                                  mda._MULTIFRAME_WRITERS.values()),
-                 key=lambda x: x.__class__.__name__)
+                 key=lambda x: id(x))
 known_ts_haters = [
     mda.coordinates.MOL2.MOL2Writer,
     mda.coordinates.PDB.PDBWriter,
