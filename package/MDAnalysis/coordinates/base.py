@@ -2161,7 +2161,7 @@ class WriterBase(six.with_metaclass(_Writermeta, IOBase)):
         """
         if isinstance(obj, Timestep):
             warnings.warn(
-                'Passing a Timestep to write is deprecated, '
+                'Passing a Timestep to write is deprecated, and will be removed 1.0; '
                 'use either an AtomGroup or Universe',
                 DeprecationWarning)
             ts = obj
