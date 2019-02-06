@@ -739,64 +739,57 @@ class WaterOrientationalRelaxation(object):
         Ex: t0=5 and tau=3 so calcultate the t0-tau=5-8 intervale.
         i = come from getMeanOnePoint (named j) (int)
         """
-        valOH = 0
-        valHH = 0
-        valdip = 0
-        n = 0
-        for j in range(len(repInd[i]) // 3):
-            begj = 3 * j
-            universe.trajectory[t0]
-            Ot0 = repInd[i][begj]
-            H1t0 = repInd[i][begj + 1]
-            H2t0 = repInd[i][begj + 2]
-            OHVector0 = H1t0.position - Ot0.position
-            HHVector0 = H1t0.position - H2t0.position
-            dipVector0 = ((H1t0.position + H2t0.position) * 0.5) - Ot0.position
+        # repInd has atoms arranged as [O H1 H2 O H1 H2...]
+        # Read positions at t0
+        self.universe.trajectory[t0]
+        oxygens = np.array([atom.position for atom in repInd[i][0::3]])
+        h1s = np.array([atom.position for atom in repInd[i][1::3]])
+        h2s = np.array([atom.position for atom in repInd[i][2::3]])
 
-            universe.trajectory[t0 + dt]
-            Otp = repInd[i][begj]
-            H1tp = repInd[i][begj + 1]
-            H2tp = repInd[i][begj + 2]
+        if oxygens.size == 0:
+            return (0., 0., 0.)
 
-            OHVectorp = H1tp.position - Otp.position
-            HHVectorp = H1tp.position - H2tp.position
-            dipVectorp = ((H1tp.position + H2tp.position) * 0.5) - Otp.position
+        # Calculate vectors at t0
+        OHi = h1s - oxygens
+        HHi = h1s - h2s
+        DIPi = (h1s + h2s) * 0.5 - oxygens
 
-            normOHVector0 = np.linalg.norm(OHVector0)
-            normOHVectorp = np.linalg.norm(OHVectorp)
-            normHHVector0 = np.linalg.norm(HHVector0)
-            normHHVectorp = np.linalg.norm(HHVectorp)
-            normdipVector0 = np.linalg.norm(dipVector0)
-            normdipVectorp = np.linalg.norm(dipVectorp)
+        # Read positions at t0+dt
+        self.universe.trajectory[t0 + dt]
+        oxygens = np.array([atom.position for atom in repInd[i][0::3]])
+        h1s = np.array([atom.position for atom in repInd[i][1::3]])
+        h2s = np.array([atom.position for atom in repInd[i][2::3]])
+        # Calculate vectors at t0+dt
+        OHf = h1s - oxygens
+        HHf = h1s - h2s
+        DIPf = (h1s + h2s) * 0.5 - oxygens
 
-            unitOHVector0 = [OHVector0[0] / normOHVector0,
-                             OHVector0[1] / normOHVector0,
-                             OHVector0[2] / normOHVector0]
-            unitOHVectorp = [OHVectorp[0] / normOHVectorp,
-                             OHVectorp[1] / normOHVectorp,
-                             OHVectorp[2] / normOHVectorp]
-            unitHHVector0 = [HHVector0[0] / normHHVector0,
-                             HHVector0[1] / normHHVector0,
-                             HHVector0[2] / normHHVector0]
-            unitHHVectorp = [HHVectorp[0] / normHHVectorp,
-                             HHVectorp[1] / normHHVectorp,
-                             HHVectorp[2] / normHHVectorp]
-            unitdipVector0 = [dipVector0[0] / normdipVector0,
-                              dipVector0[1] / normdipVector0,
-                              dipVector0[2] / normdipVector0]
-            unitdipVectorp = [dipVectorp[0] / normdipVectorp,
-                              dipVectorp[1] / normdipVectorp,
-                              dipVectorp[2] / normdipVectorp]
+        # Compute the norm of each vector (einsum is faster than linalg norm)
+        OH_norms = np.sqrt(np.einsum('ij,ij->i', OHi, OHi) * np.einsum('ij,ij->i', OHf, OHf))
+        HH_norms = np.sqrt(np.einsum('ij,ij->i', HHi, HHi) * np.einsum('ij,ij->i', HHf, HHf))
+        DIP_norms = np.sqrt(np.einsum('ij,ij->i', DIPi, DIPi) * np.einsum('ij,ij->i', DIPf, DIPf))
+        # OHi_norm = np.apply_along_axis(np.linalg.norm, 1, OHi)
+        # HHi_norm = np.apply_along_axis(np.linalg.norm, 1, HHi)
+        # DIPi_norm = np.apply_along_axis(np.linalg.norm, 1, DIPi)
+        # OHf_norm = np.apply_along_axis(np.linalg.norm, 1, OHf)
+        # HHf_norm = np.apply_along_axis(np.linalg.norm, 1, HHf)
+        # DIPf_norm = np.apply_along_axis(np.linalg.norm, 1, DIPf)
 
-            valOH += self.lg2(np.dot(unitOHVector0, unitOHVectorp))
-            valHH += self.lg2(np.dot(unitHHVector0, unitHHVectorp))
-            valdip += self.lg2(np.dot(unitdipVector0, unitdipVectorp))
-            n += 1
-        return  (valOH/n, valHH/n, valdip/n) if n > 0 else (0, 0, 0)
+        # It is (probably) faster to take the dotproduct and then divide
+        # by the norms than it is to normalize all the vectors and then dot
+        # them (fewer divisions required)
+        OH_dots = np.einsum('ij,ij->i', OHi, OHf) / OH_norms # (OHi_norm * OHf_norm)
+        HH_dots = np.einsum('ij,ij->i', HHi, HHf) / HH_norms # (HHi_norm * HHf_norm)
+        DIP_dots= np.einsum('ij,ij->i', DIPi, DIPf) / DIP_norms # (DIPi_norm * DIPf_norm)
+
+        OH_vals = self.lg2(OH_dots)
+        HH_vals = self.lg2(HH_dots)
+        DIP_vals =self.lg2(DIP_dots)
+
+        return (np.mean(OH_vals), np.mean(HH_vals), np.mean(DIP_vals))
 
 
-    def _getMeanOnePoint(self, universe, selection1, selection_str, dt,
-                         totalFrames):
+    def _getMeanOnePoint(self, universe, selection1, dt, totalFrames):
         """
         This function gets one point of the plot C_vec vs t. It uses the
         _getOneDeltaPoint() function to calculate the average.
@@ -865,7 +858,7 @@ class WaterOrientationalRelaxation(object):
         self.timeseries = []
         for dt in list(range(1, self.dtmax + 1)):
             output = self._getMeanOnePoint(
-                self.universe, selection_out, self.selection, dt, self.tf)
+                self.universe, selection_out, dt, self.tf)
             self.timeseries.append(output)
 
 
