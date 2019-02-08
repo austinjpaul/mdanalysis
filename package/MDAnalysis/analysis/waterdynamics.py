@@ -711,11 +711,94 @@ class WaterOrientationalRelaxation(object):
         self.selection = selection
         self.t0 = t0
         self.tf = tf
+        # make sure range specified is appropriate
+        self.universe.trajectory[tf-1]
+        self.total_frames = self.tf - self.t0
+        
         self.dtmax = dtmax
         self.nproc = nproc
         self.timeseries = None
 
-    def _repeatedIndex(self, selection, dt, totalFrames):
+    def _get_water_vectors(self, frame, selection):
+        """
+        Calculates the vectors along each water molecule in selection
+        in the given frame.
+        Returns: A 1x3 np array. Think of it as a list of all the 3D vectors.
+        """
+        self.universe.trajectory[frame]
+
+        # The selection has atoms arranged as [O H1 H2 O H1 H2...]
+        oxygens = np.array([atom.position for atom in selection[0::3]])
+        h1s = np.array([atom.position for atom in selection[1::3]])
+        h2s = np.array([atom.position for atom in selection[2::3]])
+
+        OH_vecs = h1s - oxygens
+        HH_vecs = h1s - h2s
+        DIP_vecs = (h1s + h2s) * 0.5 - oxygens
+
+        return (OH_vecs, HH_vecs, DIP_vecs)
+
+    def _get_one_delta_point(self, selection, t0, t1):
+        """
+        Calculates the dot product of each UNIT water vector at t0 and t1,
+        then takes the Lg polynomial of that result, and avegares over all the
+        water molecules in the current frames being compared.
+
+        In calculating the normalized dot product, it is faster to calculate
+        U*V / sqrt(||U||^2 x ||V||^2) than it is to calculate U/||U|| * V/||V||.
+        Note that ||U||^2 = U*U.
+
+        einsum('ij,ij->i', A, B) will multiply corresponding entries in both
+          arrays before summing down the columns to yield a 1D array. When
+          applied to lists of vectors as we have here, the result is the list of
+          dot products of corresponding vectors: [A[0]*B[0], A[1]*B[1], ...].
+          Einsum was faster in this scenario than calling np.linalg.norm on each
+          entry.
+        """
+        OHi, HHi, DIi = self._get_water_vectors(t0, selection)
+        OHf, HHf, DIf = self._get_water_vectors(t1, selection)
+
+        dot = 'ij,ij->i'
+
+        # Compute the product of the norms
+        OH_norms = np.sqrt(np.einsum(dot, OHi, OHi) * np.einsum(dot, OHf, OHf))
+        HH_norms = np.sqrt(np.einsum(dot, HHi, HHi) * np.einsum(dot, HHf, HHf))
+        DI_norms = np.sqrt(np.einsum(dot, DIi, DIi) * np.einsum(dot, DIf, DIf))
+
+        # Compute the dot products and normalize
+        OH_dots = np.einsum(dot, OHi, OHf) / OH_norms
+        HH_dots = np.einsum(dot, HHi, HHf) / HH_norms
+        DI_dots = np.einsum(dot, DIi, DIf) / DI_norms
+
+        OH_vals = self.lg2(OH_dots)
+        HH_vals = self.lg2(HH_dots)
+        DI_vals = self.lg2(DI_dots)
+
+        return np.array([np.mean(OH_vals), np.mean(HH_vals), np.mean(DI_vals)])
+
+
+    def _get_mean_one_point(self, selection1, dt):
+        """
+        This function gets one point of the plot C_vec vs t. It uses the
+        _get_one_delta_point() function to calculate the average.
+
+        """
+        repInd = self._repeatedIndex(selection1, dt)
+        n = 0.0
+        delta_sums = np.zeros(3)
+
+        for index, t_cur in enumerate(range(self.t0, self.tf, dt)):
+            t_next = t_cur + dt
+            if t_next >= self.tf:
+                break
+            delta_sums += self._get_one_delta_point(repInd[index], t_cur, t_next)
+            n += 1
+
+        # if no water molecules remain in selection, there is nothing to get
+        # the mean, so n = 0.
+        return delta_sums / n if n > 0 else (0, 0, 0)
+
+    def _repeatedIndex(self, selection, dt):
         """
         Indicates the comparation between all the t+dt.
         The results is a list of list with all the repeated index per frame
@@ -725,94 +808,12 @@ class WaterOrientationalRelaxation(object):
         Ex: dt=3, so compare frames (1,4),(4,7),(7,10)...
         """
         rep = []
-        for i in range(int(round((totalFrames - 1) / float(dt)))):
-            if (dt * i + dt < totalFrames):
-                rep.append(self._sameMolecTandDT(
-                    selection, dt * i, (dt * i) + dt))
+        for i in range(0, self.total_frames, dt):
+            j = i + dt
+            if j >= self.total_frames:
+                break
+            rep.append(self._sameMolecTandDT(selection, i, j))
         return rep
-
-    def _getOneDeltaPoint(self, universe, repInd, i, t0, dt):
-        """
-        Gives one point to calculate the mean and gets one point of the plot
-        C_vect vs t.
-        Ex: t0=1 and tau=1 so calculate the t0-tau=1-2 intervale.
-        Ex: t0=5 and tau=3 so calcultate the t0-tau=5-8 intervale.
-        i = come from getMeanOnePoint (named j) (int)
-        """
-        # repInd has atoms arranged as [O H1 H2 O H1 H2...]
-        # Read positions at t0
-        self.universe.trajectory[t0]
-        oxygens = np.array([atom.position for atom in repInd[i][0::3]])
-        h1s = np.array([atom.position for atom in repInd[i][1::3]])
-        h2s = np.array([atom.position for atom in repInd[i][2::3]])
-
-        if oxygens.size == 0:
-            return (0., 0., 0.)
-
-        # Calculate vectors at t0
-        OHi = h1s - oxygens
-        HHi = h1s - h2s
-        DIPi = (h1s + h2s) * 0.5 - oxygens
-
-        # Read positions at t0+dt
-        self.universe.trajectory[t0 + dt]
-        oxygens = np.array([atom.position for atom in repInd[i][0::3]])
-        h1s = np.array([atom.position for atom in repInd[i][1::3]])
-        h2s = np.array([atom.position for atom in repInd[i][2::3]])
-        # Calculate vectors at t0+dt
-        OHf = h1s - oxygens
-        HHf = h1s - h2s
-        DIPf = (h1s + h2s) * 0.5 - oxygens
-
-        # Compute the norm of each vector (einsum is faster than linalg norm)
-        OH_norms = np.sqrt(np.einsum('ij,ij->i', OHi, OHi) * np.einsum('ij,ij->i', OHf, OHf))
-        HH_norms = np.sqrt(np.einsum('ij,ij->i', HHi, HHi) * np.einsum('ij,ij->i', HHf, HHf))
-        DIP_norms = np.sqrt(np.einsum('ij,ij->i', DIPi, DIPi) * np.einsum('ij,ij->i', DIPf, DIPf))
-        # OHi_norm = np.apply_along_axis(np.linalg.norm, 1, OHi)
-        # HHi_norm = np.apply_along_axis(np.linalg.norm, 1, HHi)
-        # DIPi_norm = np.apply_along_axis(np.linalg.norm, 1, DIPi)
-        # OHf_norm = np.apply_along_axis(np.linalg.norm, 1, OHf)
-        # HHf_norm = np.apply_along_axis(np.linalg.norm, 1, HHf)
-        # DIPf_norm = np.apply_along_axis(np.linalg.norm, 1, DIPf)
-
-        # It is (probably) faster to take the dotproduct and then divide
-        # by the norms than it is to normalize all the vectors and then dot
-        # them (fewer divisions required)
-        OH_dots = np.einsum('ij,ij->i', OHi, OHf) / OH_norms # (OHi_norm * OHf_norm)
-        HH_dots = np.einsum('ij,ij->i', HHi, HHf) / HH_norms # (HHi_norm * HHf_norm)
-        DIP_dots= np.einsum('ij,ij->i', DIPi, DIPf) / DIP_norms # (DIPi_norm * DIPf_norm)
-
-        OH_vals = self.lg2(OH_dots)
-        HH_vals = self.lg2(HH_dots)
-        DIP_vals =self.lg2(DIP_dots)
-
-        return (np.mean(OH_vals), np.mean(HH_vals), np.mean(DIP_vals))
-
-
-    def _getMeanOnePoint(self, universe, selection1, dt, totalFrames):
-        """
-        This function gets one point of the plot C_vec vs t. It uses the
-        _getOneDeltaPoint() function to calculate the average.
-
-        """
-        repInd = self._repeatedIndex(selection1, dt, totalFrames)
-        sumsdt = 0
-        n = 0.0
-        sumDeltaOH = 0.0
-        sumDeltaHH = 0.0
-        sumDeltadip = 0.0
-
-        for j in range(totalFrames // dt - 1):
-            a = self._getOneDeltaPoint(universe, repInd, j, sumsdt, dt)
-            sumDeltaOH += a[0]
-            sumDeltaHH += a[1]
-            sumDeltadip += a[2]
-            sumsdt += dt
-            n += 1
-
-        # if no water molecules remain in selection, there is nothing to get
-        # the mean, so n = 0.
-        return (sumDeltaOH / n, sumDeltaHH / n, sumDeltadip / n) if n > 0 else (0, 0, 0)
 
     def _sameMolecTandDT(self, selection, t0d, tf):
         """
@@ -829,11 +830,11 @@ class WaterOrientationalRelaxation(object):
 
     def _selection_serial(self, universe, selection_str):
         selection = []
-        pm = ProgressMeter(universe.trajectory.n_frames,
+        pm = ProgressMeter(self.total_frames,
                            interval=10, verbose=True)
-        for ts in universe.trajectory:
+        for ts in universe.trajectory[self.t0:self.tf]:
             selection.append(universe.select_atoms(selection_str))
-            pm.echo(ts.frame)
+            pm.echo(ts.frame - self.t0)
         return selection
 
     @staticmethod
@@ -857,8 +858,7 @@ class WaterOrientationalRelaxation(object):
                 self.universe, self.selection)
         self.timeseries = []
         for dt in list(range(1, self.dtmax + 1)):
-            output = self._getMeanOnePoint(
-                self.universe, selection_out, dt, self.tf)
+            output = self._get_mean_one_point(selection_out, dt)
             self.timeseries.append(output)
 
 
